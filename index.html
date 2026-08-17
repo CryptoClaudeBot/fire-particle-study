@@ -168,8 +168,15 @@
     fl.connect(flFilt); flFilt.connect(flGain); flGain.connect(master);
     fl.start();
   }
-  ['mousedown','mousemove','touchstart','keydown'].forEach(ev=>
-    addEventListener(ev,()=>{initAudio(); if(AC&&AC.state==='suspended')AC.resume();},{once:true,capture:true}));
+  function unlockAudio(){                          // iOS needs repeated tries + a silent kick, often on touchend
+    initAudio();
+    if(!AC||AC.state==='running')return;
+    AC.resume();
+    try{const b=AC.createBuffer(1,1,22050);const s=AC.createBufferSource();
+      s.buffer=b;s.connect(AC.destination);s.start(0);}catch(err){}
+  }
+  ['touchstart','touchend','mousedown','mousemove','keydown','click'].forEach(ev=>
+    addEventListener(ev,unlockAudio,{capture:true}));
   function grain(vol,freq,dur,pan,at){
     if(!AC||!soundOn)return;
     const t0=at||AC.currentTime;
