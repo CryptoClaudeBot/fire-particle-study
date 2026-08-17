@@ -21,6 +21,7 @@
   .lbl{font-size:11px;letter-spacing:.34em;text-transform:uppercase;line-height:2;}
   .sub{color:var(--dim);} .right{text-align:right;} .num{color:var(--ink);}
   .big{font-size:12px;letter-spacing:.5em;}
+  @media (max-width:480px){.lbl{font-size:10px;letter-spacing:.22em;}}  /* keep hint lines unwrapped on phones */
   #mode,#snd{pointer-events:auto;text-decoration:underline dotted;text-underline-offset:4px;}
 
   #cur{position:fixed;top:50%;left:50%;width:30px;height:30px;margin:-15px 0 0 -15px;
@@ -69,7 +70,7 @@
 
   // ==== PERSISTENT particles: every grain has a HOME on the flame; forces displace it, springs bring it back
   const PN=Math.min(innerWidth,innerHeight)<700?4200:7200;   // lighter on phones
-  if(MOBILE)document.getElementById('hint').innerHTML='One finger to lead the flame<br>Two fingers to stoke &nbsp;·&nbsp; <span class="num" id="snd">Sound: on</span>';
+  if(MOBILE)document.getElementById('hint').innerHTML='One finger to lead the flame<br>Two fingers to stoke · <span class="num" id="snd">Sound: on</span>';
   const Ppx=new Float32Array(PN),Ppy=new Float32Array(PN),Pvx=new Float32Array(PN),Pvy=new Float32Array(PN),
         Psd=new Float32Array(PN),Psz=new Float32Array(PN),
         Pk =new Uint8Array(PN),                     // 0 heap · 1 column
@@ -277,7 +278,7 @@
     if(!AC||!bedGain)return;
     const t0=AC.currentTime, pan=(mx-cx)/(W*0.6);
     // wind bed follows the swipe; a low draft while pressed
-    const target=soundOn?Math.min(0.34,curSweep*0.4+press*0.09+0.015):0;
+    const target=soundOn?Math.min(0.34,curSweep*0.2+press*0.09+0.015):0;  // swipe wind halved
     bedGain.gain.setTargetAtTime(target,t0,0.07);
     bedFilt.frequency.setTargetAtTime(420+curSweep*2600+press*-150,t0,0.09);
     // flame roar breathes with the surge, swells when stoked
@@ -294,12 +295,12 @@
     rsCool-=dt;
     if(curSweep>0.55&&rsCool<=0){rsCool=1.4;rainstick(1.7,0.7+curSweep*0.6);}
     // sand grains: idle trickle + fanning rush + pressed churn
-    const gps=6+curSweep*380+press*120;
+    const gps=6+curSweep*190+press*120;                      // swipe grain density halved
     gAcc+=gps*dt;
     let n=0;
     while(gAcc>=1&&n<14){gAcc--;n++;
       const f=press>0.4?650+Math.random()*1200:1100+Math.random()*2400;
-      grain(0.018+Math.random()*(0.03+curSweep*0.06),f,0.02+Math.random()*0.05,pan+(Math.random()-0.5)*0.4);
+      grain(0.018+Math.random()*(0.03+curSweep*0.03),f,0.02+Math.random()*0.05,pan+(Math.random()-0.5)*0.4);
     }
     if(gAcc>14)gAcc=14;
   }
