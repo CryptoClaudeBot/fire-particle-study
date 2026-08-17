@@ -22,6 +22,15 @@
   .sub{color:var(--dim);} .right{text-align:right;} .num{color:var(--ink);}
   .big{font-size:12px;letter-spacing:.5em;}
   @media (max-width:480px){.lbl{font-size:10px;letter-spacing:.22em;}}  /* keep hint lines unwrapped on phones */
+
+  /* focus-timer hourglass controls */
+  #tui{position:fixed;top:clamp(12px,2vw,26px);left:50%;transform:translateX(-50%);
+    text-align:center;z-index:6;pointer-events:none;}
+  #tui .cap{font-size:10px;letter-spacing:.3em;color:var(--dim);text-transform:uppercase;}
+  #tui .tset{pointer-events:auto;text-decoration:underline dotted;text-underline-offset:3px;color:var(--dim);}
+  #tui .tset.on{color:var(--ink);}
+  #tmr{display:block;font-size:15px;letter-spacing:.28em;color:var(--ink);
+    font-variant-numeric:tabular-nums;margin-top:4px;}
   #mode,#snd{pointer-events:auto;text-decoration:underline dotted;text-underline-offset:4px;}
 
   #cur{position:fixed;top:50%;left:50%;width:30px;height:30px;margin:-15px 0 0 -15px;
@@ -36,6 +45,11 @@
 <body>
 <canvas id="fire"></canvas>
 <div id="cur"></div>
+
+<div id="tui" class="lbl">
+  <span class="cap"><span class="tset" data-m="5">5</span> · <span class="tset" data-m="10">10</span> · <span class="tset" data-m="30">30</span> min</span>
+  <span id="tmr">--:--</span>
+</div>
 
 <div class="ui">
   <div class="row">
@@ -111,6 +125,20 @@
     opx[i]=x;opy[i]=y;ovx[i]=vX;ovy[i]=vY;olf[i]=0;oml[i]=life;osz[i]=size;osd[i]=Math.random()*1e3;
   }
 
+  // ---- hourglass focus timer: same white-dust language as the fire ----
+  const HGN=520, hgY=118;
+  const hgU=new Float32Array(HGN), hgV=new Float32Array(HGN),
+        hgR=new Float32Array(HGN), hgS=new Float32Array(HGN);
+  for(let i=0;i<HGN;i++){hgU[i]=Math.random();hgV[i]=Math.random();hgR[i]=Math.random();hgS[i]=Math.random();}
+  let tTotal=0, tLeft=0, tRun=false, flipA=0;
+  const tmrEl=document.getElementById('tmr');
+  function setTimer(min){
+    tTotal=min*60; tLeft=tTotal; tRun=true; flipA=1;                 // flip the glass, restart the sand
+    document.querySelectorAll('.tset').forEach(el=>el.classList.toggle('on',+el.dataset.m===min));
+    thump(0.2,320,0.16); rainstick(0.6,0.5);
+  }
+  document.querySelectorAll('.tset').forEach(el=>el.addEventListener('click',()=>setTimer(+el.dataset.m)));
+
   // ---- the flame's spine: whippy chain that carries the column homes ----
   const RN=13;
   const ropeX=new Float32Array(RN), ropeY=new Float32Array(RN),
@@ -127,7 +155,8 @@
   addEventListener('mouseup',pressOff);
   // touch: ONE finger leads the flame (hover) · TWO fingers stoke (press)
   function onTouch(e){
-    if(e.target&&(e.target.id==='mode'||e.target.id==='snd'))return; // let label taps become clicks
+    if(e.target&&(e.target.id==='mode'||e.target.id==='snd'||
+      (e.target.classList&&e.target.classList.contains('tset'))))return; // let label taps become clicks
     e.preventDefault();
     const n=e.touches.length;
     if(n>0){let x=0,y=0;for(const tc of e.touches){x+=tc.clientX;y+=tc.clientY;}move(x/n,y/n);}
@@ -321,6 +350,10 @@
     const sweep=Math.min(1,Math.hypot(bvx,bvy)/1500); curSweep=sweep;
     const wander=Math.sin(t*0.55)+Math.sin(t*1.35+2)*0.7;
     const surge=0.75+0.45*Math.sin(t*0.9+Math.sin(t*0.37)*2)+0.25*Math.sin(t*2.3); curSurge=surge;
+    // hourglass timekeeping
+    flipA=Math.max(0,flipA-dt/0.55);
+    if(tRun){tLeft-=dt;
+      if(tLeft<=0){tLeft=0;tRun=false;bowl(261.6,0.22,8);pop();pop();}}   // bowl strike marks time's up
 
     // pressed: the dot grabs the BASE — drifts within the fire's footprint, pinches narrow
     press+=((down?1:0)-press)*Math.min(1,6*dt);
@@ -466,8 +499,57 @@
       g.globalAlpha=Math.min(1,heat*3)*flick*0.9;
       g.drawImage(sprOrb,opx[i]-s,opy[i]-s,s*2,s*2);
     }
+    drawHG();
     g.globalAlpha=1; g.globalCompositeOperation='source-over';
     pcEl.textContent=PN+ocount; fpsEl.textContent=fps;
+    if(tTotal>0){const s=Math.ceil(tLeft);
+      tmrEl.textContent=String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');}
+  }
+
+  function drawHG(){                                // the hourglass: wire frame + living sand
+    const HW=30, HB=38, GAP=3;
+    const rem=tTotal>0?tLeft/tTotal:0;
+    const e=flipA*flipA*(3-2*flipA);                // smoothstep ease on the flip
+    g.save(); g.translate(cx,hgY); g.rotate(Math.PI*e);
+    // frame
+    g.globalCompositeOperation='source-over';
+    g.strokeStyle='rgba(255,255,255,0.30)'; g.lineWidth=1;
+    g.beginPath();
+    g.moveTo(-HW,-HB-GAP); g.lineTo(HW,-HB-GAP);
+    g.moveTo(-HW,HB+GAP);  g.lineTo(HW,HB+GAP);
+    g.moveTo(-HW,-HB-GAP); g.lineTo(-2,-GAP); g.lineTo(-2,GAP); g.lineTo(-HW,HB+GAP);
+    g.moveTo(HW,-HB-GAP);  g.lineTo(2,-GAP);  g.lineTo(2,GAP);  g.lineTo(HW,HB+GAP);
+    g.stroke();
+    // sand
+    g.globalCompositeOperation='lighter';
+    const hf=HB*0.92*Math.sqrt(rem);                // top pile height  (area ~ remaining time)
+    const hb=HB*0.90*Math.sqrt(1-rem);              // bottom heap height
+    const floorY=HB+GAP-2;
+    for(let i=0;i<HGN;i++){
+      const wob=Math.sin(t*7+i)*0.5;
+      let x,y;
+      if(hgR[i]<rem){                               // grain still in the top bulb
+        const yy=hf*Math.sqrt(hgV[i]);
+        x=(hgU[i]*2-1)*(HW*(yy/HB)*0.86+1)+wob; y=-(GAP+1+yy*0.97);
+      }else{                                        // grain settled in the bottom heap
+        const q=1-Math.sqrt(hgV[i]);
+        const yy=hb*q;
+        x=(hgU[i]*2-1)*(HW*0.82*(1-q*0.72)+1.2)+wob; y=floorY-yy;
+      }
+      const s2=0.8+hgS[i]*0.9;
+      g.globalAlpha=0.5+0.25*Math.sin(t*13+i);
+      g.drawImage(sprDust,x-s2,y-s2,s2*2,s2*2);
+    }
+    if(tRun&&rem>0){                                // the trickle through the neck
+      for(let k=0;k<12;k++){
+        const ph=(t*1.5+k/12)%1;
+        const y=-GAP+ph*(floorY-hb+GAP-1);
+        const x=Math.sin(t*11+k*2.6)*1.4;
+        g.globalAlpha=0.55;
+        g.drawImage(sprDust,x-0.9,y-0.9,1.8,1.8);
+      }
+    }
+    g.restore();
   }
 
   function frame(now){
