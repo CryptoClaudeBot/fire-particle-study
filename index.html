@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>FIRE — Particle Study</title>
+<style>
+  :root{ --bg:#0a0a0a; --ink:#f4f2ec; --dim:rgba(244,242,236,.40); }
+  html,body{margin:0;height:100%;background:var(--bg);overflow:hidden;
+    font-family:"SF Mono",ui-monospace,"Roboto Mono",Menlo,Consolas,monospace;
+    color:var(--ink);-webkit-font-smoothing:antialiased;cursor:none;transition:background .6s ease;
+    touch-action:none;overscroll-behavior:none;-webkit-user-select:none;user-select:none;}
+  body.day{--bg:#e8e5de;--ink:#161310;--dim:rgba(22,19,16,.5);}
+  canvas{position:fixed;inset:0;width:100vw;height:100vh;display:block;}
+  body.day #fire{filter:invert(1);}
+
+  .ui{position:fixed;inset:0;pointer-events:none;z-index:5;
+    display:flex;flex-direction:column;justify-content:space-between;
+    padding:clamp(16px,3vw,38px);}
+  .row{display:flex;justify-content:space-between;align-items:flex-start;}
+  .lbl{font-size:11px;letter-spacing:.34em;text-transform:uppercase;line-height:2;}
+  .sub{color:var(--dim);} .right{text-align:right;} .num{color:var(--ink);}
+  .big{font-size:12px;letter-spacing:.5em;}
+  #mode,#snd{pointer-events:auto;text-decoration:underline dotted;text-underline-offset:4px;}
+
+  #cur{position:fixed;top:50%;left:50%;width:30px;height:30px;margin:-15px 0 0 -15px;
+    z-index:9;border:1.5px solid var(--ink);border-radius:50%;pointer-events:none;opacity:.9;
+    transition:width .12s ease,height .12s ease,margin .12s ease;}
+  #cur.hot{width:52px;height:52px;margin:-26px 0 0 -26px;}
+  #cur::before{content:"";position:absolute;left:50%;top:50%;width:3px;height:3px;margin:-1.5px 0 0 -1.5px;
+    background:var(--ink);border-radius:50%;transition:width .12s ease,height .12s ease,margin .12s ease;}
+  #cur.hot::before{width:6px;height:6px;margin:-3px 0 0 -3px;}
+</style>
+</head>
+<body>
+<canvas id="fire"></canvas>
+<div id="cur"></div>
+
+<div class="ui">
+  <div class="row">
+    <div class="lbl"><span class="big">FIRE</span><br><span class="sub">Particle Study · <span id="mode">Monochrome</span></span></div>
+  </div>
+  <div class="row">
+    <div class="lbl sub" id="hint">Move to lead the flame<br>Press to stoke &nbsp;·&nbsp; <span class="num" id="snd">Sound: on</span></div>
+    <div class="lbl right"><span class="num" id="pc">0</span> Particles &nbsp;·&nbsp; <span class="num" id="fps">0</span> FPS</div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const cv=document.getElementById('fire'), g=cv.getContext('2d',{alpha:true});
+  let W,H,DPR,cx,baseY;
+  function resize(){
+    DPR=Math.min(devicePixelRatio||1,2); W=innerWidth; H=innerHeight;
+    cv.width=W*DPR; cv.height=H*DPR; g.setTransform(DPR,0,0,DPR,0,0);
+    cx=W*0.5; baseY=H*0.80;
+  }
+  addEventListener('resize',resize); resize();
+
+  function makeSprite(size,stops){
+    const c=document.createElement('canvas'); c.width=c.height=size;
+    const x=c.getContext('2d'), gr=x.createRadialGradient(size/2,size/2,0,size/2,size/2,size/2);
+    for(const[o,a]of stops) gr.addColorStop(o,`rgba(255,255,255,${a})`);
+    x.fillStyle=gr; x.fillRect(0,0,size,size); return c;
+  }
+  const sprDust=makeSprite(16,[[0,1],[0.3,.85],[0.6,.18],[1,0]]);
+  const sprOrb =makeSprite(64,[[0,1],[0.16,.65],[0.5,.15],[1,0]]);
+
+  // ==== PERSISTENT particles: every grain has a HOME on the flame; forces displace it, springs bring it back
+  const MOBILE='ontouchstart' in window||navigator.maxTouchPoints>0;
+  const PN=Math.min(innerWidth,innerHeight)<700?4200:7200;   // lighter on phones
+  if(MOBILE)document.getElementById('hint').innerHTML='One finger to lead the flame<br>Two fingers to stoke &nbsp;·&nbsp; <span class="num" id="snd">Sound: on</span>';
+  const Ppx=new Float32Array(PN),Ppy=new Float32Array(PN),Pvx=new Float32Array(PN),Pvy=new Float32Array(PN),
+        Psd=new Float32Array(PN),Psz=new Float32Array(PN),
+        Pk =new Uint8Array(PN),                     // 0 heap · 1 column
+        Pt =new Uint8Array(PN),                     // 1 = side tongue
+        Pa =new Float32Array(PN),                   // heap: x-offset | column: arclength s | tongue: attach s0
+        Pb =new Float32Array(PN);                   // heap: dome height | column: lateral | tongue: side*progress
+  for(let i=0;i<PN;i++){
+    Psd[i]=Math.random()*1e3;
+    if(i<PN*0.38){                                  // root grains -> a narrow glowing base, not a dune
+      Pk[i]=0;
+      const off=(Math.random()+Math.random()-1)*64;
+      Pa[i]=off;
+      Pb[i]=-Math.pow(Math.random(),1.5)*58*(1.05-Math.abs(off)/72);
+      Psz[i]=0.9+Math.random()*1.6;
+    }else if(Math.random()<0.20){                   // side tongues -> three discrete licks, alternating sides
+      Pk[i]=1; Pt[i]=1;
+      const ti=(Math.random()*3)|0;                 // which lick
+      Pa[i]=[0.10,0.26,0.40][ti]+(Math.random()-0.5)*0.05;
+      Pb[i]=(ti===1?1:-1)*Math.pow(Math.random(),0.75);   // low-left, mid-right, high-left
+      Psz[i]=0.6+Math.random()*1.0;
+    }else{                                          // column grains -> the licking body of the flame
+      Pk[i]=1;
+      const s=Math.pow(Math.random(),1.35)*1.04;    // a few live past the tip
+      Pa[i]=s;
+      Pb[i]=(Math.random()+Math.random()-1)*(30*Math.pow(1-Math.min(s,1),1.1)+2);  // slim body -> the belly is the root's job
+      Psz[i]=0.55+Math.random()*1.05;
+    }
+    Ppx[i]=cx; Ppy[i]=baseY;                        // will spring to home on first frames
+  }
+
+  // ---- orbs: small transient pool ----
+  const OC=400;
+  const opx=new Float32Array(OC),opy=new Float32Array(OC),ovx=new Float32Array(OC),ovy=new Float32Array(OC),
+        olf=new Float32Array(OC),oml=new Float32Array(OC),osz=new Float32Array(OC),osd=new Float32Array(OC);
+  let ocount=0;
+  function spawnOrb(x,y,vX,vY,life,size){
+    if(ocount>=OC)return; const i=ocount++;
+    opx[i]=x;opy[i]=y;ovx[i]=vX;ovy[i]=vY;olf[i]=0;oml[i]=life;osz[i]=size;osd[i]=Math.random()*1e3;
+  }
+
+  // ---- the flame's spine: whippy chain that carries the column homes ----
+  const RN=13;
+  const ropeX=new Float32Array(RN), ropeY=new Float32Array(RN),
+        rvx=new Float32Array(RN), rvy=new Float32Array(RN);
+  for(let i=0;i<RN;i++){ropeX[i]=cx; ropeY[i]=baseY-24-i*(H*0.55/RN);}
+
+  const cur=document.getElementById('cur');
+  let mx=cx,my=H*0.4,tmx=cx,tmy=H*0.4,down=false;
+  function move(x,y){tmx=x;tmy=y;cur.style.left=x+'px';cur.style.top=y+'px';}
+  function pressOn(){if(down)return;down=true;cur.classList.add('hot');sfxPress();}
+  function pressOff(){if(!down)return;down=false;cur.classList.remove('hot');sfxRelease();}
+  addEventListener('mousemove',e=>move(e.clientX,e.clientY));
+  addEventListener('mousedown',pressOn);
+  addEventListener('mouseup',pressOff);
+  // touch: ONE finger leads the flame (hover) · TWO fingers stoke (press)
+  function onTouch(e){
+    if(e.target&&(e.target.id==='mode'||e.target.id==='snd'))return; // let label taps become clicks
+    e.preventDefault();
+    const n=e.touches.length;
+    if(n>0){let x=0,y=0;for(const tc of e.touches){x+=tc.clientX;y+=tc.clientY;}move(x/n,y/n);}
+    if(n>=2)pressOn(); else pressOff();
+  }
+  addEventListener('touchstart',onTouch,{passive:false});
+  addEventListener('touchmove',onTouch,{passive:false});
+  addEventListener('touchend',onTouch,{passive:false});
+  addEventListener('touchcancel',onTouch,{passive:false});
+  let dayMode=false;
+  function toggleDay(){dayMode=!dayMode;document.body.classList.toggle('day',dayMode);
+    document.getElementById('mode').textContent=dayMode?'Day Mode':'Monochrome';
+    bowl(dayMode?196:147,0.20,7);}                 // singing-bowl strike marks the day/night turn
+  addEventListener('keydown',e=>{if(e.key==='d'||e.key==='D')toggleDay();
+    if(e.key==='s'||e.key==='S')toggleSound();});
+  document.getElementById('mode').addEventListener('click',toggleDay);
+
+  // ==== granular sand audio — every grain of sound is a tiny burst of filtered noise ====
+  let AC=null,master=null,noiseBuf=null,bedGain=null,bedFilt=null,soundOn=true,gAcc=0,curSweep=0,
+      flGain=null,flFilt=null,popAcc=0,curSurge=0.75,rsCool=0;
+  function initAudio(){
+    if(AC)return;
+    try{AC=new (window.AudioContext||window.webkitAudioContext)();}catch(e){return;}
+    const comp=AC.createDynamicsCompressor(); comp.connect(AC.destination);
+    master=AC.createGain(); master.gain.value=0; master.connect(comp);
+    master.gain.linearRampToValueAtTime(0.9,AC.currentTime+0.8);
+    noiseBuf=AC.createBuffer(1,AC.sampleRate*2,AC.sampleRate);
+    const d=noiseBuf.getChannelData(0);
+    for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;
+    const bed=AC.createBufferSource(); bed.buffer=noiseBuf; bed.loop=true;
+    bedFilt=AC.createBiquadFilter(); bedFilt.type='bandpass'; bedFilt.frequency.value=800; bedFilt.Q.value=0.8;
+    bedGain=AC.createGain(); bedGain.gain.value=0;
+    bed.connect(bedFilt); bedFilt.connect(bedGain); bedGain.connect(master);
+    bed.start();
+    // flame roar bed: slowed brown-ish noise through a low-pass, breathes with the surge
+    const fl=AC.createBufferSource(); fl.buffer=noiseBuf; fl.loop=true; fl.playbackRate.value=0.32;
+    flFilt=AC.createBiquadFilter(); flFilt.type='lowpass'; flFilt.frequency.value=230;
+    flGain=AC.createGain(); flGain.gain.value=0;
+    fl.connect(flFilt); flFilt.connect(flGain); flGain.connect(master);
+    fl.start();
+  }
+  ['mousedown','mousemove','touchstart','keydown'].forEach(ev=>
+    addEventListener(ev,()=>{initAudio(); if(AC&&AC.state==='suspended')AC.resume();},{once:true,capture:true}));
+  function grain(vol,freq,dur,pan,at){
+    if(!AC||!soundOn)return;
+    const t0=at||AC.currentTime;
+    const src=AC.createBufferSource(); src.buffer=noiseBuf;
+    src.playbackRate.value=0.7+Math.random()*0.7;
+    const bp=AC.createBiquadFilter(); bp.type='bandpass';
+    bp.frequency.value=freq*(0.8+Math.random()*0.5); bp.Q.value=1.5+Math.random()*3;
+    const gn=AC.createGain();
+    gn.gain.setValueAtTime(0,t0);
+    gn.gain.linearRampToValueAtTime(vol,t0+0.004);
+    gn.gain.exponentialRampToValueAtTime(0.0001,t0+dur);
+    src.connect(bp); bp.connect(gn);
+    if(AC.createStereoPanner){const pn=AC.createStereoPanner();pn.pan.value=Math.max(-1,Math.min(1,pan));gn.connect(pn);pn.connect(master);}
+    else gn.connect(master);
+    src.start(t0,Math.random()*1.5,dur+0.05); src.stop(t0+dur+0.1);
+  }
+  function thump(vol,freq,dur){                    // soft body hit for press / release
+    if(!AC||!soundOn)return;
+    const t0=AC.currentTime;
+    const src=AC.createBufferSource(); src.buffer=noiseBuf;
+    const lp=AC.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=freq;
+    const gn=AC.createGain();
+    gn.gain.setValueAtTime(0,t0);
+    gn.gain.linearRampToValueAtTime(vol,t0+0.012);
+    gn.gain.exponentialRampToValueAtTime(0.0001,t0+dur);
+    src.connect(lp); lp.connect(gn); gn.connect(master);
+    src.start(t0,Math.random(),dur+0.05); src.stop(t0+dur+0.1);
+  }
+  function pop(){                                  // nutshell crack: sharp resonant snap, sometimes double
+    if(!AC||!soundOn)return;
+    const t0=AC.currentTime;
+    const mk=(at,v,d)=>{const s=AC.createBufferSource();s.buffer=noiseBuf;
+      const b=AC.createBiquadFilter();b.type='bandpass';
+      b.frequency.value=1600+Math.random()*3600;b.Q.value=6+Math.random()*8;
+      const g=AC.createGain();g.gain.setValueAtTime(v,at);
+      g.gain.exponentialRampToValueAtTime(0.0001,at+d);
+      s.connect(b);b.connect(g);g.connect(master);
+      s.start(at,Math.random()*1.8,d+0.05);s.stop(at+d+0.1);};
+    mk(t0,0.09+Math.random()*0.13,0.02+Math.random()*0.03);
+    if(Math.random()<0.3)mk(t0+0.03+Math.random()*0.07,0.06+Math.random()*0.07,0.015+Math.random()*0.02);
+  }
+  function bowl(base,vol,decay){                   // singing bowl: inharmonic partials, beating pairs, long ring
+    if(!AC||!soundOn)return;
+    const t0=AC.currentTime;
+    const lp=AC.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=4200; lp.connect(master);
+    for(const[m,g]of[[1,1],[2.94,0.42],[5.42,0.2],[8.63,0.09]]){
+      for(const det of[-1,1]){
+        const o=AC.createOscillator(); o.type='sine';
+        o.frequency.value=base*m*(1+det*0.0016*(0.5+Math.random()));
+        const gn=AC.createGain(); const d=decay*(m===1?1:1/Math.sqrt(m));
+        gn.gain.setValueAtTime(0,t0);
+        gn.gain.linearRampToValueAtTime(vol*g*0.5,t0+0.008+0.004*m);
+        gn.gain.exponentialRampToValueAtTime(0.0001,t0+d);
+        o.connect(gn); gn.connect(lp);
+        o.start(t0); o.stop(t0+d+0.1);
+      }
+    }
+  }
+  function rainstick(dur,intensity){               // cascade of tiny beads, dense at first then tapering
+    if(!AC||!soundOn)return;
+    const t0=AC.currentTime, N=Math.floor(70*dur*intensity);
+    for(let k=0;k<N;k++){
+      const tt=Math.pow(Math.random(),0.55)*dur;
+      grain(0.012+Math.random()*0.022,2600+Math.random()*3800,0.015+Math.random()*0.03,
+            (mx-cx)/(W*0.6)+(Math.random()-0.5)*0.8, t0+tt);
+    }
+  }
+  function toggleSound(){soundOn=!soundOn;
+    const el=document.getElementById('snd'); if(el)el.textContent='Sound: '+(soundOn?'on':'off');}
+  const sndEl=document.getElementById('snd');
+  if(sndEl)sndEl.addEventListener('click',toggleSound);
+  function sfxPress(){thump(0.30,260,0.22);bowl(130.8,0.11,5);
+    for(let k=0;k<14;k++)grain(0.05+Math.random()*0.05,600+Math.random()*900,0.03+Math.random()*0.05,(mx-cx)/(W*0.6));}
+  function sfxRelease(){thump(0.14,420,0.16);rainstick(1.1,0.55);
+    for(let k=0;k<10;k++)grain(0.03+Math.random()*0.04,900+Math.random()*1600,0.04+Math.random()*0.06,(mx-cx)/(W*0.6));}
+  function audioTick(dt){
+    if(!AC||!bedGain)return;
+    const t0=AC.currentTime, pan=(mx-cx)/(W*0.6);
+    // wind bed follows the swipe; a low draft while pressed
+    const target=soundOn?Math.min(0.34,curSweep*0.4+press*0.09+0.015):0;
+    bedGain.gain.setTargetAtTime(target,t0,0.07);
+    bedFilt.frequency.setTargetAtTime(420+curSweep*2600+press*-150,t0,0.09);
+    // flame roar breathes with the surge, swells when stoked
+    if(flGain){
+      const flutter=0.85+0.15*Math.sin(t0*12.7)+0.08*Math.sin(t0*31.3);
+      const roar=soundOn?Math.min(0.30,(0.05+0.11*Math.max(0,curSurge-0.4)+press*0.10)*flutter):0;
+      flGain.gain.setTargetAtTime(roar,t0,0.1);
+      flFilt.frequency.setTargetAtTime(200+press*140+curSurge*60,t0,0.15);
+    }
+    // nutshell cracks: sparse & random, denser when the fire is worked
+    popAcc+=(1.1+press*5+curSweep*3.5)*dt*(0.4+Math.random()*1.2);
+    let m=0; while(popAcc>=1&&m<2){popAcc--;m++;pop();}
+    // rainstick cascade on a hard swipe
+    rsCool-=dt;
+    if(curSweep>0.55&&rsCool<=0){rsCool=1.4;rainstick(1.7,0.7+curSweep*0.6);}
+    // sand grains: idle trickle + fanning rush + pressed churn
+    const gps=6+curSweep*380+press*120;
+    gAcc+=gps*dt;
+    let n=0;
+    while(gAcc>=1&&n<14){gAcc--;n++;
+      const f=press>0.4?650+Math.random()*1200:1100+Math.random()*2400;
+      grain(0.018+Math.random()*(0.03+curSweep*0.06),f,0.02+Math.random()*0.05,pan+(Math.random()-0.5)*0.4);
+    }
+    if(gAcc>14)gAcc=14;
+  }
+
+  function turb(x,y,t){return Math.sin(y*0.012+t*1.1)*0.6+Math.sin(y*0.033-t*1.6+x*0.004)*0.4+Math.sin(x*0.02+t*0.7)*0.3;}
+
+  const pcEl=document.getElementById('pc'),fpsEl=document.getElementById('fps');
+  let last=performance.now(),t=0,fps=0,fAcc=0,fN=0,emitO=0,
+      curBaseX=cx,headX=cx,headY=baseY,curHeadY=baseY,press=0,ptx=cx,pty=0;
+
+  function sim(dt){
+    t+=dt;
+    mx+=(tmx-mx)*0.14; my+=(tmy-my)*0.14;
+    // cursor swipe velocity -> the wind you fan with
+    const bvx=Math.max(-2600,Math.min(2600,(tmx-ptx)/Math.max(dt,1e-3)));
+    const bvy=Math.max(-2600,Math.min(2600,(tmy-pty)/Math.max(dt,1e-3)));
+    ptx=tmx; pty=tmy;
+    const sweep=Math.min(1,Math.hypot(bvx,bvy)/1500); curSweep=sweep;
+    const wander=Math.sin(t*0.55)+Math.sin(t*1.35+2)*0.7;
+    const surge=0.75+0.45*Math.sin(t*0.9+Math.sin(t*0.37)*2)+0.25*Math.sin(t*2.3); curSurge=surge;
+
+    // pressed: the dot grabs the BASE — drifts within the fire's footprint, pinches narrow
+    press+=((down?1:0)-press)*Math.min(1,6*dt);
+    const hxT=down?cx+Math.max(-170,Math.min(170,mx-cx)):cx+Math.max(-50,Math.min(50,(mx-cx)*0.10));
+    const hyT=down?Math.max(baseY-95,Math.min(baseY,my)):baseY;
+    headX+=(hxT-headX)*Math.min(1,3.5*dt);
+    headY+=(hyT-headY)*Math.min(1,3.5*dt);
+    curBaseX=headX; curHeadY=headY;
+
+    // ---- spine ----
+    const segL=H*0.62/(RN-1)*(0.8+0.25*surge);
+    ropeX[0]=headX; ropeY[0]=headY-24;
+    for(let i=1;i<RN;i++){
+      let pdx,pdy;
+      if(i===1){pdx=0;pdy=-1;}
+      else{pdx=ropeX[i-1]-ropeX[i-2];pdy=ropeY[i-1]-ropeY[i-2];const l=Math.hypot(pdx,pdy)||1;pdx/=l;pdy/=l;}
+      let ddx=pdx*0.42+(wander*0.13+Math.sin(t*2.1+i*0.9)*0.07+Math.sin(t*4.6+i*1.6)*0.05)*(i/RN);
+      let ddy=pdy*0.42-0.58;
+      const dl=Math.hypot(ddx,ddy)||1;
+      let txp=ropeX[i-1]+ddx/dl*segL, typ=ropeY[i-1]+ddy/dl*segL;
+      txp+=(mx-txp)*0.30*Math.pow(i/(RN-1),1.2);   // hover sway: spine chases the cursor
+      rvx[i]+=((txp-ropeX[i])*26-rvx[i]*5.5)*dt;
+      rvy[i]+=((typ-ropeY[i])*26-rvy[i]*5.5)*dt;
+      ropeX[i]+=rvx[i]*dt; ropeY[i]+=rvy[i]*dt;
+    }
+
+    // ---- persistent grains: home spring + turbulence + cursor forces ----
+    const pinch=1-0.25*press;
+    for(let i=0;i<PN;i++){
+      // per-grain looseness: some grains cling, some shed easily — that's the flaking layered feel
+      const klo=0.45+((Psd[i]*3.7)%1)*1.15;         // 0.45..1.6 spring factor
+      const tlo=0.6+((Psd[i]*5.3)%1)*1.5;           // turbulence sensitivity
+      let hxp,hyp,k;
+      if(Pk[i]===0){                                // heap home rides the (possibly airborne) base
+        const taper0=1.05-Math.abs(Pa[i])/72;
+        const u=Pa[i]/64, round=Math.sqrt(Math.max(0,1-u*u));
+        const profIdle=taper0*0.17+round*0.88;                       // idle: round dome belly, not a cone
+        const prof=profIdle+(round*0.92-profIdle)*press;
+        const hgt=(-Pb[i])/(58*taper0);
+        const hgt2=hgt+(Math.sqrt(hgt)-hgt)*press;                   // pressed: fill the dome upward
+        const belly=Math.sqrt(Math.max(0,1-Math.pow(2*hgt2-1,2)));   // widest at mid-height -> egg silhouette
+        hxp=headX+Pa[i]*pinch*((1-press)*(0.68+0.42*belly)+press*(0.55+0.65*belly)); // bottom tucks in -> round base
+        hyp=headY-4-58*hgt2*prof*(1+0.35*press);
+        k=6.5;
+      }else if(Pt[i]===1){                          // side tongue: arcs outward, curls in at its tip, sways
+        const s0=Pa[i], f=s0*(RN-1), i0=f|0, fr=f-i0;
+        const rx=ropeX[i0]+(ropeX[i0+1]-ropeX[i0])*fr,
+              ry=ropeY[i0]+(ropeY[i0+1]-ropeY[i0])*fr;
+        let tx2=ropeX[i0+1]-ropeX[i0], ty2=ropeY[i0+1]-ropeY[i0];
+        const tl=Math.hypot(tx2,ty2)||1; tx2/=tl; ty2/=tl;
+        const side=Math.sign(Pb[i]), q=Math.abs(Pb[i]);
+        const sway=Math.sin(t*2.2+side*1.7+s0*6)*9;
+        const lat=side*(20+64*q-34*q*q)+sway;       // out, then curling back in
+        const rise=26+92*q;
+        hxp=rx-ty2*lat+tx2*rise;                    // lateral along the normal, rise along the spine tangent
+        hyp=ry+tx2*lat+ty2*rise;
+        k=10-4*q;                                   // licks hold their shape tightly
+      }else{                                        // column home hangs on the spine
+        const s=Pa[i], f=Math.min(s,0.999)*(RN-1), i0=f|0, fr=f-i0;
+        let rx=ropeX[i0]+(ropeX[i0+1]-ropeX[i0])*fr,
+            ry=ropeY[i0]+(ropeY[i0+1]-ropeY[i0])*fr;
+        let tx2=ropeX[Math.min(i0+1,RN-1)]-ropeX[i0], ty2=ropeY[Math.min(i0+1,RN-1)]-ropeY[i0];
+        const tl=Math.hypot(tx2,ty2)||1; tx2/=tl; ty2/=tl;
+        if(s>1){rx+=tx2*(s-1)*(RN-1)*segL; ry+=ty2*(s-1)*(RN-1)*segL;}   // past-tip strays
+        const s1=Math.min(s,1);
+        const wave=1+0.38*Math.sin(s1*9.5-t*3.2+Psd[i]*0.03);            // travelling licks -> wavy notched edge
+        const lat=Pb[i]*(0.75+0.45*Math.sin(t*0.7+Psd[i]))*wave;
+        hxp=rx-ty2*lat; hyp=ry+tx2*lat;
+        k=6.5-4.8*s1;                               // loose at the top -> wispy
+      }
+      if(Pt[i]!==1)k*=klo;
+      // spring home + turbulence (licks feel far less of it — they keep their outline)
+      const s01=Pk[i]===0?0:Math.min(Pa[i],1);
+      const tq=Pt[i]===1?0.35:1;
+      Pvx[i]+=((hxp-Ppx[i])*k+turb(Ppx[i],Ppy[i],t+Psd[i])*(26+150*s01)*tlo*tq-Pvx[i]*3.2)*dt;
+      Pvy[i]+=((hyp-Ppy[i])*k+turb(Ppy[i],Ppx[i],t*1.2+Psd[i])*(20+110*s01)*tlo*tq-Pvy[i]*3.2)*dt;
+      const dxc=Ppx[i]-mx, dyc=Ppy[i]-my, dc=Math.hypot(dxc,dyc);
+      // swipe = fanning: blows grains off with a rolling curl (halved while pressed -> drag sheds a scatter trail)
+      if(sweep>0.04&&dc<300){
+        const f=(1-dc/300)*sweep*(1-press*0.55);
+        Pvx[i]+=(bvx*0.9+dxc/(dc+2)*170-dyc/(dc+2)*150)*f*7*dt;
+        Pvy[i]+=(bvy*0.75+dyc/(dc+2)*130+dxc/(dc+2)*150)*f*7*dt;
+      }
+      // PRESS = gathering: grains lean toward the dot but stay a loose swarm
+      if(press>0.05&&dc<280){
+        const f=(1-dc/280)*press;
+        Pvx[i]+=(-dxc*2.5+bvx*1.0)*f*dt;
+        Pvy[i]+=(-dyc*2.5+bvy*1.0)*f*dt;
+      }
+      Ppx[i]+=Pvx[i]*dt; Ppy[i]+=Pvy[i]*dt;
+    }
+
+    // ---- orbs ----
+    emitO+=(down?26:12)*dt;
+    while(emitO>=1){emitO--;
+      const off=(Math.random()+Math.random()-1)*60;
+      spawnOrb(headX+off, headY-20-Math.random()*40,
+            (Math.random()-0.5)*50, -(60+Math.random()*130),
+            2.2+Math.random()*1.9, 2.4+Math.random()*3.4);
+    }
+    for(let i=0;i<ocount;i++){
+      olf[i]+=dt;
+      if(olf[i]>=oml[i]){const j=--ocount;
+        opx[i]=opx[j];opy[i]=opy[j];ovx[i]=ovx[j];ovy[i]=ovy[j];olf[i]=olf[j];oml[i]=oml[j];osz[i]=osz[j];osd[i]=osd[j];i--;continue;}
+      const heat=1-olf[i]/oml[i];
+      ovx[i]+=((down?(mx-opx[i])*0.55:0)+turb(opx[i],opy[i],t+osd[i])*30-ovx[i]*1.1)*dt;
+      ovy[i]+=((down?(my-opy[i])*0.35:0)-95*heat-4-ovy[i]*0.9)*dt;
+      opx[i]+=ovx[i]*dt; opy[i]+=ovy[i]*dt;
+    }
+  }
+
+  function render(){
+    g.clearRect(0,0,W,H);
+    g.globalCompositeOperation='source-over';
+    g.setLineDash([3,8]); g.strokeStyle='rgba(255,255,255,0.13)'; g.lineWidth=1;
+    g.beginPath();g.ellipse(cx,baseY+10,150,30,0,0,Math.PI*2);g.stroke(); g.setLineDash([]);
+
+    g.globalCompositeOperation='lighter';
+    const gg=g.createRadialGradient(cx,baseY,0,cx,baseY,H*0.5);
+    gg.addColorStop(0,'rgba(255,255,255,0.05)');gg.addColorStop(1,'rgba(255,255,255,0)');
+    g.fillStyle=gg;g.fillRect(0,0,W,H);
+    const hc=g.createRadialGradient(curBaseX,curHeadY-10,0,curBaseX,curHeadY-10,down?170:125);
+    hc.addColorStop(0,`rgba(255,255,255,${down?0.34:0.24})`);hc.addColorStop(1,'rgba(255,255,255,0)');
+    g.fillStyle=hc;g.fillRect(0,0,W,H);
+
+    for(let i=0;i<PN;i++){
+      if(Pk[i]===0){                                 // root: steady glow
+        g.globalAlpha=0.9*(0.85+0.15*Math.sin(t*14+Psd[i]));
+        const s=Psz[i];
+        g.drawImage(sprDust,Ppx[i]-s,Ppy[i]-s,s*2,s*2);
+      }else{                                         // body: bursty, uneven fire flicker
+        const flick=0.66+0.34*Math.sin(t*20+Psd[i])*Math.sin(t*7.3+Psd[i]*0.7)
+                   +0.10*Math.sin(t*47+Psd[i]*3);
+        const fade=1-Math.min(Pa[i],1)*0.75;
+        g.globalAlpha=Math.max(0,Math.min(1,0.74*fade*flick));
+        const s=Psz[i]*(1.1-0.35*Math.min(Pa[i],1));
+        g.drawImage(sprDust,Ppx[i]-s,Ppy[i]-s,s*2,s*2);
+      }
+    }
+    for(let i=0;i<ocount;i++){
+      const heat=1-olf[i]/oml[i], flick=0.72+0.28*Math.sin(t*20+osd[i]);
+      const s=osz[i]*(0.6+heat*0.6);
+      g.globalAlpha=Math.min(1,heat*3)*flick*0.9;
+      g.drawImage(sprOrb,opx[i]-s,opy[i]-s,s*2,s*2);
+    }
+    g.globalAlpha=1; g.globalCompositeOperation='source-over';
+    pcEl.textContent=PN+ocount; fpsEl.textContent=fps;
+  }
+
+  function frame(now){
+    let dt=(now-last)/1000; last=now; if(dt>0.05)dt=0.05;
+    sim(dt); render(); audioTick(dt);
+    fAcc+=dt;fN++; if(fAcc>=0.4){fps=Math.round(fN/fAcc);fAcc=0;fN=0;}
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+  window.__fire={sim,render,steady(n){for(let k=0;k<(n||220);k++)sim(1/60);render();}};
+})();
+</script>
+</body>
+</html>
