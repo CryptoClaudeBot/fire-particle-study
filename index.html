@@ -23,15 +23,21 @@
   .big{font-size:12px;letter-spacing:.5em;}
   @media (max-width:480px){.lbl{font-size:10px;letter-spacing:.22em;}}  /* keep hint lines unwrapped on phones */
 
-  /* focus-timer hourglass — top right, alarm-style preset chips */
+  /* focus-timer hourglass — hourglass left · big clock right · preset boxes below */
   #tui{position:fixed;top:clamp(14px,2.5vw,30px);right:clamp(16px,3vw,38px);z-index:6;
-    display:flex;flex-direction:column;align-items:flex-end;gap:8px;pointer-events:none;text-align:right;}
-  #tui .tchips{display:flex;gap:6px;}
-  #tui .tset{pointer-events:auto;padding:7px 12px;border:1px solid var(--dim);border-radius:999px;
-    font-size:11px;letter-spacing:.12em;line-height:1;color:var(--dim);
+    display:flex;flex-direction:column;align-items:flex-start;gap:10px;pointer-events:none;}
+  #tui .trow{display:flex;align-items:center;gap:16px;}
+  #hgslot{width:58px;height:86px;}
+  #tmr{font-size:clamp(34px,5vw,42px);letter-spacing:.08em;color:var(--ink);
+    font-variant-numeric:tabular-nums;line-height:1;font-weight:600;}
+  #tui .tchips{display:flex;gap:8px;}
+  #tui .tset{pointer-events:auto;padding:8px 13px;border:1px solid var(--dim);border-radius:6px;
+    font-size:13px;letter-spacing:.08em;line-height:1;color:var(--dim);
     font-variant-numeric:tabular-nums;transition:color .2s,border-color .2s,background .2s;}
   #tui .tset.on{border-color:var(--ink);color:var(--bg);background:var(--ink);}
-  #tmr{font-size:21px;letter-spacing:.14em;color:var(--ink);font-variant-numeric:tabular-nums;line-height:1;}
+  @media (max-width:480px){
+    #tui{right:auto;left:16px;top:88px;}          /* phones: its own band under the title, per the sketch */
+  }
   #mode,#snd{pointer-events:auto;text-decoration:underline dotted;text-underline-offset:4px;}
 
   #cur{position:fixed;top:50%;left:50%;width:30px;height:30px;margin:-15px 0 0 -15px;
@@ -48,10 +54,13 @@
 <div id="cur"></div>
 
 <div id="tui" class="lbl">
+  <div class="trow">
+    <div id="hgslot"></div>
+    <span id="tmr">--:--</span>
+  </div>
   <div class="tchips">
     <span class="tset" data-m="5">5:00</span><span class="tset" data-m="10">10:00</span><span class="tset" data-m="30">30:00</span>
   </div>
-  <span id="tmr">--:--</span>
 </div>
 
 <div class="ui">
@@ -135,6 +144,11 @@
   for(let i=0;i<HGN;i++){hgU[i]=Math.random();hgV[i]=Math.random();hgR[i]=Math.random();hgS[i]=Math.random();}
   let tTotal=0, tLeft=0, tRun=false, flipA=0;
   const tmrEl=document.getElementById('tmr');
+  let hgRect={x:innerWidth-140,y:44,w:58,h:86};                      // where the glass lives (from #hgslot)
+  function hgMeasure(){const r=document.getElementById('hgslot').getBoundingClientRect();
+    if(r.width)hgRect={x:r.left,y:r.top,w:r.width,h:r.height};}
+  addEventListener('resize',()=>setTimeout(hgMeasure,60));
+  setTimeout(hgMeasure,60);
   function setTimer(min){
     tTotal=min*60; tLeft=tTotal; tRun=true; flipA=1;                 // flip the glass, restart the sand
     document.querySelectorAll('.tset').forEach(el=>el.classList.toggle('on',+el.dataset.m===min));
@@ -294,7 +308,7 @@
     const t0=AC.currentTime, N=Math.floor(70*dur*intensity);
     for(let k=0;k<N;k++){
       const tt=Math.pow(Math.random(),0.55)*dur;
-      grain(0.012+Math.random()*0.022,2600+Math.random()*3800,0.015+Math.random()*0.03,
+      grain(0.008+Math.random()*0.015,2600+Math.random()*3800,0.015+Math.random()*0.03,
             (mx-cx)/(W*0.6)+(Math.random()-0.5)*0.8, t0+tt);
     }
   }
@@ -304,7 +318,7 @@
   if(sndEl)sndEl.addEventListener('click',toggleSound);
   function sfxPress(){thump(0.30,260,0.22);bowl(130.8,0.11,5);
     for(let k=0;k<14;k++)grain(0.05+Math.random()*0.05,600+Math.random()*900,0.03+Math.random()*0.05,(mx-cx)/(W*0.6));}
-  function sfxRelease(){thump(0.14,420,0.16);rainstick(1.1,0.55);
+  function sfxRelease(){thump(0.14,420,0.16);rainstick(0.9,0.35);
     for(let k=0;k<10;k++)grain(0.03+Math.random()*0.04,900+Math.random()*1600,0.04+Math.random()*0.06,(mx-cx)/(W*0.6));}
   function audioTick(dt){
     if(!AC||!bedGain)return;
@@ -323,9 +337,9 @@
     // nutshell cracks: sparse & random, denser when the fire is worked
     popAcc+=(1.1+press*5+curSweep*3.5)*dt*(0.4+Math.random()*1.2);
     let m=0; while(popAcc>=1&&m<2){popAcc--;m++;pop();}
-    // rainstick cascade on a hard swipe
+    // rainstick cascade only on a really hard fling, and much softer
     rsCool-=dt;
-    if(curSweep>0.55&&rsCool<=0){rsCool=1.4;rainstick(1.7,0.7+curSweep*0.6);}
+    if(curSweep>0.85&&rsCool<=0){rsCool=2.6;rainstick(1.2,0.32);}
     // sand grains: idle trickle + fanning rush + pressed churn
     const gps=6+curSweep*90+press*120;                       // swipe grain density quartered
     gAcc+=gps*dt;
@@ -510,12 +524,10 @@
   }
 
   function drawHG(){                                // the hourglass: waisted glass, framed caps, living sand
-    const HW=34, HB=44, GAP=4;
+    const HW=24, HB=32, GAP=3;
     const rem=tTotal>0?tLeft/tTotal:0;
     const e=flipA*flipA*(3-2*flipA);                // smoothstep ease on the flip
-    const pad=Math.min(38,Math.max(16,W*0.03));
-    const topPad=Math.min(30,Math.max(14,W*0.025));
-    const hx=W-pad-92, hy=topPad+66+HB+GAP+8;       // sits under the chips + readout, top right
+    const hx=hgRect.x+hgRect.w/2, hy=hgRect.y+hgRect.h/2;   // anchored to the #hgslot layout box
     g.save(); g.translate(hx,hy); g.rotate(Math.PI*e);
     // frame: double-beam caps, curved waisted glass
     g.globalCompositeOperation='source-over';
