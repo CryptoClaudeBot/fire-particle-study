@@ -193,7 +193,7 @@
 
   // ==== granular sand audio — every grain of sound is a tiny burst of filtered noise ====
   let AC=null,master=null,noiseBuf=null,bedGain=null,bedFilt=null,soundOn=true,gAcc=0,curSweep=0,
-      flGain=null,flFilt=null,popAcc=0,curSurge=0.75,rsCool=0;
+      flGain=null,flFilt=null,popAcc=0,curSurge=0.75,rsCool=0,swPeak=0;
   function initAudio(){
     if(AC)return;
     try{AC=new (window.AudioContext||window.webkitAudioContext)();}catch(e){return;}
@@ -324,7 +324,7 @@
     if(!AC||!bedGain)return;
     const t0=AC.currentTime, pan=(mx-cx)/(W*0.6);
     // wind bed follows the swipe; a low draft while pressed
-    const target=soundOn?Math.min(0.34,curSweep*0.09+press*0.09+0.015):0; // swipe wind quartered
+    const target=soundOn?Math.min(0.34,curSweep*0.05+press*0.09+0.015):0; // faint wind while sliding
     bedGain.gain.setTargetAtTime(target,t0,0.07);
     bedFilt.frequency.setTargetAtTime(420+curSweep*2600+press*-150,t0,0.09);
     // flame roar breathes with the surge, swells when stoked
@@ -334,19 +334,25 @@
       flGain.gain.setTargetAtTime(roar,t0,0.1);
       flFilt.frequency.setTargetAtTime(200+press*140+curSurge*60,t0,0.15);
     }
-    // nutshell cracks: ambient ember pops — barely coupled to swiping (they were the loud one)
-    popAcc+=(1.1+press*5+curSweep*0.6)*dt*(0.4+Math.random()*1.2);
+    // nutshell cracks: ambient ember pops only (not tied to swiping)
+    popAcc+=(1.1+press*5)*dt*(0.4+Math.random()*1.2);
     let m=0; while(popAcc>=1&&m<2){popAcc--;m++;pop();}
-    // rainstick cascade only on a really hard fling, and much softer
+    // SWIPE-END convergence: when a swipe winds down, the sand settles — rainstick + a couple of cracks
     rsCool-=dt;
-    if(curSweep>0.85&&rsCool<=0){rsCool=2.6;rainstick(1.2,0.32);}
-    // sand grains: idle trickle + fanning rush + pressed churn
-    const gps=6+curSweep*50+press*120;                       // swipe grain rush kept gentle
+    swPeak=Math.max(curSweep,swPeak-1.4*swPeak*dt);
+    if(swPeak>0.45&&curSweep<0.12&&rsCool<=0){
+      rsCool=1.0;
+      rainstick(1.3,0.4+swPeak*0.4);
+      pop(); if(Math.random()<0.7)pop();
+      swPeak=0;
+    }
+    // sand grains: whisper-quiet friction while sliding; character lives in the convergence
+    const gps=5+curSweep*18+press*120;
     gAcc+=gps*dt;
     let n=0;
     while(gAcc>=1&&n<14){gAcc--;n++;
       const f=press>0.4?650+Math.random()*1200:1100+Math.random()*2400;
-      grain(0.018+Math.random()*(0.03+curSweep*0.015),f,0.02+Math.random()*0.05,pan+(Math.random()-0.5)*0.4);
+      grain(0.014+Math.random()*0.022,f,0.02+Math.random()*0.05,pan+(Math.random()-0.5)*0.4);
     }
     if(gAcc>14)gAcc=14;
   }
