@@ -334,14 +334,14 @@
       flGain.gain.setTargetAtTime(roar,t0,0.1);
       flFilt.frequency.setTargetAtTime(200+press*140+curSurge*60,t0,0.15);
     }
-    // nutshell cracks: sparse & random, denser when the fire is worked
-    popAcc+=(1.1+press*5+curSweep*3.5)*dt*(0.4+Math.random()*1.2);
+    // nutshell cracks: ambient ember pops — barely coupled to swiping (they were the loud one)
+    popAcc+=(1.1+press*5+curSweep*0.6)*dt*(0.4+Math.random()*1.2);
     let m=0; while(popAcc>=1&&m<2){popAcc--;m++;pop();}
     // rainstick cascade only on a really hard fling, and much softer
     rsCool-=dt;
     if(curSweep>0.85&&rsCool<=0){rsCool=2.6;rainstick(1.2,0.32);}
     // sand grains: idle trickle + fanning rush + pressed churn
-    const gps=6+curSweep*90+press*120;                       // swipe grain density quartered
+    const gps=6+curSweep*50+press*120;                       // swipe grain rush kept gentle
     gAcc+=gps*dt;
     let n=0;
     while(gAcc>=1&&n<14){gAcc--;n++;
